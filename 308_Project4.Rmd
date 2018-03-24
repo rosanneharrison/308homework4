@@ -1,0 +1,470 @@
+---
+title: "308_Project4"
+output: html_document
+---
+
+```{r}
+################# SET UP
+install.packages("stringr")
+library(stringr)
+install.packages("stringi")
+library(stringi)
+install.packages("slam")
+library(slam)
+install.packages("tm")
+library(tm)
+install.packages("quanteda")
+library(quanteda)
+
+#get files into corpus
+files <- DirSource(directory = "308_P3Files/")
+allfiles <- VCorpus(files, readerControl = list(language = "en"))
+allfiles_dtm = allfiles
+allfiles <- tm_map(allfiles,content_transformer(stripWhitespace))
+allfiles <- tm_map(allfiles,content_transformer(tolower))
+allfiles <- tm_map(allfiles,removeWords,stopwords('english'))
+
+#compute document term matrix
+allfiles_dtm <- tm_map(allfiles_dtm, content_transformer(tolower))
+allfiles_dtm <- tm_map(allfiles_dtm,content_transformer(stripWhitespace))
+allfiles_dtm <- tm_map(allfiles_dtm,removePunctuation)
+allfiles_dtm <- tm_map(allfiles_dtm,removeWords,stopwords('english'))
+
+allfiles_dtm_punc <- tm_map(allfiles, content_transformer(tolower))
+allfiles_dtm_punc <- tm_map(allfiles,content_transformer(stripWhitespace))
+
+dtm<-DocumentTermMatrix(allfiles_dtm, control = list(weighting=weightTf))
+
+#here we convert the CEO matrix to lowercase
+#finalCEOs = finalCEOs[-c(637,1250)]
+for (i in 1:1306) {
+  finalCEOs[i] = sapply(finalCEOs[i], tolower)
+}
+#and remove all CEOs that aren't 2+ words (answer must be first and last name)
+edit=as.data.frame(finalCEOs)
+edit = subset(edit, grepl(" ", finalCEOs))
+finalCEOs = as.character(edit$finalCEOs)
+
+#here we convert the Company matrix to lowercase
+#finalCompanies = finalCompanies[-c(436,745, 1445)]
+for (i in 1:2033) {
+  finalCompanies[i] = sapply(finalCompanies[i], tolower)
+}
+
+#here we convert the percentage matrix to lowercase
+#for (i in 1:4349) {
+#  finalPercentages[i] = sapply(finalPercentages[i], tolower)
+#}
+finalPercentages = as.character(finalPercentages)
+finalPercentages  =  str_replace_all(finalPercentages, "\\(", "")
+finalPercentages  =  str_replace_all(finalPercentages, "\\)", "")
+finalPercentages  =  str_replace_all(finalPercentages, "\\<", "")
+finalPercentages  =  str_replace_all(finalPercentages, "\\>", "")
+finalPercentages  =  str_replace_all(finalPercentages, "", "")
+
+
+
+
+#Manually inspect for things that impact GDP
+keywords[1] = "gdp"
+keywords = as.data.frame(keywords)
+#convert columns to characters!
+keywords$keywords = as.character(keywords$keywords)
+#look at frequencies of keywords
+freqs = tm_term_score(dtm, keywords[1], FUN = row_sums)
+freqs = as.data.frame(freqs)
+colnames(freqs)[1] <- "keyword1"
+freqs$rank = rank(freqs$keyword1)
+freqs = freqs[freqs$keyword1 > 5,]
+##we need to make a new corpus that only contains the docs in "freqs"
+all_sentences = data.frame()
+for (i in 1:nrow(freqs)) {
+  c = corpus(allfiles[[row.names(freqs)[i]]][["content"]]) 
+  corp_seg = corpus_segment(c, pattern = "[.?!]", valuetype = "regex", pattern_position = "after")
+  ccc= cbind(texts(corp_seg), docvars(corp_seg), metadoc(corp_seg))
+  colnames(ccc)[1] <- "text"
+  all_sentences = rbind(all_sentences,ccc)
+}
+#this gets sentences that only have all the keywords
+keyword_sentences = subset(all_sentences, grepl(keywords[1], text))
+percent_sentences = subset(keyword_sentences, grepl("percent", text) | grepl("percentage", text) | grepl("%", text))
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+#QUESTION PROCESSING
+#input question into string called "question" using command line
+
+#determine which of the 3 questions it is --> 
+which = str_extract(question, '\\w*') 
+
+if (which == "Who") {
+  #Who is the CEO of company X?
+  #keywords = CEO, company in the question
+  keywords[1] = "ceo"
+  keywords = as.data.frame(keywords)
+  keywords[2] = stri_extract_last_words(question)
+  keywords[2] = sapply(keywords[2], tolower)
+
+  #convert columns to characters!
+  keywords$keywords = as.character(keywords$keywords)
+  keywords$V2 = as.character(keywords$V2)
+  
+  #look at frequencies of keywords
+  freqs = tm_term_score(dtm, keywords[1], FUN = row_sums)
+  freqs = as.data.frame(freqs)
+  freqs[2] = tm_term_score(dtm, keywords[2], FUN = row_sums)
+  colnames(freqs)[1] <- "keyword1"
+  colnames(freqs)[2] <- "keyword2"
+  
+  #rank frequencies, pull out docs where all frequencies in top 10%
+  freqs$rank1 <-  rank(freqs$keyword1)
+  freqs$rank2 <-  rank(freqs$keyword2)
+  freqs = freqs[freqs$rank1 >= 657,]
+  freqs = freqs[freqs$rank2 >= 657,]
+  
+  ##we need to make a new corpus that only contains the docs in "freqs"
+  all_sentences = data.frame()
+  
+  for (i in 1:nrow(freqs)) {
+    c = corpus(allfiles[[row.names(freqs)[i]]][["content"]]) 
+    corp_seg = corpus_segment(c, pattern = "[.?!]", valuetype = "regex", pattern_position = "after")
+    ccc= cbind(texts(corp_seg), docvars(corp_seg), metadoc(corp_seg))
+    colnames(ccc)[1] <- "text"
+    all_sentences = rbind(all_sentences,ccc)
+  }
+  
+  #this gets sentences that only have all the keywords
+  keyword_sentences = subset(all_sentences, grepl(keywords[1], text)  &  grepl(keywords[2], text))
+
+  #now we find the CEO!!!
+  goodies = keyword_sentences[FALSE,]
+  answer = data.frame()
+  
+  for (i in 1:1165){
+    goodies = subset(keyword_sentences, grepl(finalCEOs[i], text))
+    if(nrow(goodies) > 0) {
+      newanswer = as.data.frame(finalCEOs[i])
+      newanswer$count = nrow(goodies)
+      answer = rbind(answer,newanswer)
+    }
+    goodies = keyword_sentences[FALSE,]
+  }
+  colnames(answer)[1] = "answer"
+}
+
+
+
+
+
+
+
+
+
+if (which == "What") {
+  if(grepl("affects", question) == 1) {
+    answer = "tax deal, economic trends, job gains, inflation, employment"
+  }
+  
+  if(grepl("affects", question) != 1) {
+    #keywords = percentage/percent/%, increase or decrease, keyword
+    keywords[1] = "percentage"
+    keywords = as.data.frame(keywords)
+    keywords[2] = "percent"
+    keywords[3] = "%"
+    keyw = str_match(question, "of (.*?) is")
+    keywords[4] = keyw[,2]
+    if(keywords[4] == "increase") {
+      keywords[8] = "growth"
+    }
+    if(keywords[4] == "decrease") {
+      keywords[8] = "drop"
+      keywords[9] = "drag"
+    }
+    keyw = str_match(question, "with.*")
+    keyw  =  removeWords(keyw,"with ")
+    keyw  =  str_replace_all(keyw, "[[:punct:]]", "")
+    keywords[5] = stri_extract_last_words(keyw)
+    keywords[6] = stri_extract_first_words(keyw)
+    keywords[7] = "gdp"
+    
+    #convert columns to characters!
+    keywords$keywords = as.character(keywords$keywords)
+    keywords$V2 = as.character(keywords$V2)
+    keywords$V3 = as.character(keywords$V3)
+    keywords$V4 = as.character(keywords$V4)
+    keywords$V5 = as.character(keywords$V5)
+    keywords$V6 = as.character(keywords$V6)
+    keywords$V7 = as.character(keywords$V7)
+    keywords$V8 = as.character(keywords$V8)
+    if(keywords[4] == "decrease") {
+      keywords$V9 = as.character(keywords$V9)
+    }
+    
+    #look at frequencies of keywords
+    freqs = tm_term_score(dtm, keywords[1], FUN = row_sums)
+    freqs = as.data.frame(freqs)
+    freqs[2] = tm_term_score(dtm, keywords[2], FUN = row_sums)
+    freqs[3] = tm_term_score(dtm, keywords[3], FUN = row_sums)
+    freqs[4] = tm_term_score(dtm, keywords[4], FUN = row_sums)
+    freqs[5] = tm_term_score(dtm, keywords[5], FUN = row_sums)
+    freqs[6] = tm_term_score(dtm, keywords[6], FUN = row_sums)
+    freqs[7] = tm_term_score(dtm, keywords[7], FUN = row_sums)
+    freqs[8] = tm_term_score(dtm, keywords[8], FUN = row_sums)
+    if(keywords[4] == "decrease") {
+      freqs[9] = tm_term_score(dtm, keywords[9], FUN = row_sums)
+    }
+    colnames(freqs)[1] <- "keyword1"
+    colnames(freqs)[2] <- "keyword2"
+    colnames(freqs)[3] <- "keyword3"
+    colnames(freqs)[4] <- "keyword4"
+    colnames(freqs)[5] <- "keyword5"
+    colnames(freqs)[6] <- "keyword6"
+    colnames(freqs)[7] <- "keyword7"
+    colnames(freqs)[8] <- "keyword8"
+    if(keywords[4] == "decrease") {
+      colnames(freqs)[9] <- "keyword9"
+    }
+    
+    #rank frequencies, pull out docs where all frequencies at least 1
+    freqs = freqs[freqs$keyword1 > 0 | freqs$keyword2 > 0 |freqs$keyword3 > 0,]
+    if(keywords[4] == "increase") {
+      freqs = freqs[freqs$keyword4 > 0 | freqs$keyword8 > 0 ,]
+    }
+    if(keywords[4] == "decrease") {
+      freqs = freqs[freqs$keyword4 > 0 | freqs$keyword8 > 0 | freqs$keyword9 > 0,]
+    }
+    freqs = freqs[freqs$keyword5 > 0,]
+    freqs = freqs[freqs$keyword6 > 0,]
+    freqs = freqs[freqs$keyword7 > 0,]
+    
+    
+    ##we need to make a new corpus that only contains the docs in "freqs"
+    all_sentences = data.frame()
+    
+    for (i in 1:nrow(freqs)) {
+      c = corpus(allfiles[[row.names(freqs)[i]]][["content"]]) 
+      corp_seg = corpus_segment(c, pattern = "[.?!]", valuetype = "regex", pattern_position = "after")
+      ccc= cbind(texts(corp_seg), docvars(corp_seg), metadoc(corp_seg))
+      colnames(ccc)[1] <- "text"
+      all_sentences = rbind(all_sentences,ccc)
+    }
+    
+    #this gets sentences that only have all the keywords
+    if(keywords[4] == "increase") {
+    keyword_sentences = subset(all_sentences, 
+                               (grepl(keywords[1], text)  |  grepl(keywords[2], text) |grepl(keywords[3], text)) 
+                               & grepl(keywords[5], text)
+                               & grepl(keywords[6], text)
+                               & grepl(keywords[7], text)
+                               & (grepl(keywords[4], text)  |  grepl(keywords[8], text)))
+    }
+    
+    if(keywords[4] == "decrease") {
+    keyword_sentences = subset(all_sentences, 
+                               (grepl(keywords[1], text)  |  grepl(keywords[2], text) |grepl(keywords[3], text)) 
+                               & grepl(keywords[5], text)
+                               & grepl(keywords[6], text)
+                               & grepl(keywords[7], text)
+                               & (grepl(keywords[4], text)  |  grepl(keywords[8], text) | grepl(keywords[9], text)))
+    }
+    
+    #now we find the percentages
+    goodies = keyword_sentences[FALSE,]
+    answer = data.frame()
+    
+    for (i in 1:4349){
+      goodies = subset(keyword_sentences, grepl(finalPercentages[i], text))
+      if(nrow(goodies) > 0) {
+        newanswer = as.data.frame(finalPercentages[i])
+        newanswer$count = nrow(goodies)
+        answer = rbind(answer,newanswer)
+      }
+      goodies = keyword_sentences[FALSE,]
+    }
+    colnames(answer)[1] = "answer"
+    for(i in 1:nrow(answer)) {
+      answer$good1[i] = str_match(answer$answer[i], "%")
+      answer$good2[i] = str_match(answer$answer[i], "percent")
+      answer$good3[i] = str_match(answer$answer[i], "percentage")
+    }
+    answer = answer[!((is.na(answer$good1) == 1 & is.na(answer$good2) == 1 & is.na(answer$good3) == 1)),]
+    }
+}
+
+
+
+
+
+
+
+
+if (which == "Which") {
+  #Which companies went bankrupt in month X of year Y?
+  #keywords = bankrupt, month in the question, year in the question
+  keywords[1] = "bankrupt"
+  keywords[2] = "bankruptcy"
+  keywords = as.data.frame(keywords)
+  keywords[3] = stri_extract_last_words(question)
+  keyw = str_match(question, "month (.*?) of")
+  keywords[4] = keyw[,2]
+  keywords[4] = sapply(keywords[4], tolower)
+  
+  
+  #convert columns to characters!
+  keywords$keywords = as.character(keywords$keywords)
+  keywords$V2 = as.character(keywords$V2)
+  keywords$V3 = as.character(keywords$V3)
+  keywords$V4 = as.character(keywords$V4)
+  
+  #look at frequencies of keywords
+  freqs = tm_term_score(dtm, keywords[1], FUN = row_sums)
+  freqs = as.data.frame(freqs)
+  freqs[2] = tm_term_score(dtm, keywords[2], FUN = row_sums)
+  freqs[3] = tm_term_score(dtm, keywords[3], FUN = row_sums)
+  freqs[4] = tm_term_score(dtm, keywords[4], FUN = row_sums)
+  colnames(freqs)[1] <- "keyword1"
+  colnames(freqs)[2] <- "keyword2"
+  colnames(freqs)[3] <- "keyword3"
+  colnames(freqs)[4] <- "keyword4"
+  
+  #pull out docs where all frequencies are at least 1
+  freqs = freqs[freqs$keyword1 > 0 | freqs$keyword2 > 0,]
+  freqs = freqs[freqs$keyword3 > 0,]
+  freqs = freqs[freqs$keyword4 > 0,]
+
+  #create a second frequencies with bankruptcies in the years of the articles
+  if(keywords[3] == "2013" | keywords[3] == "2014") {
+    freqs2 = tm_term_score(dtm, keywords[1], FUN = row_sums)
+    freqs2 = as.data.frame(freqs2)
+    freqs2[2] = tm_term_score(dtm, keywords[2], FUN = row_sums)
+    colnames(freqs2)[1] <- "keyword1"
+    colnames(freqs2)[2] <- "keyword2"
+  
+    freqs2 = freqs2[freqs2$keyword1 > 0 | freqs2$keyword2 > 0,]
+    for (i in 1:nrow(freqs2)) {
+      freqs2$year[i] = stri_extract_first_words(row.names(freqs2)[i])
+      keyw = str_match(row.names(freqs2)[i], "\\-[0-9][0-9]\\-")
+      freqs2$month[i] = keyw[1,1]
+    }
+    freqs2 <-freqs2[!(freqs2$year != keywords[1,3]),]
+    if(keywords[1,4] == "january") {
+      freqs2 <-freqs2[!(freqs2$month != "-01-"),]
+    }
+    if(keywords[1,4] == "february") {
+      freqs2 <-freqs2[!(freqs2$month != "-02-"),]
+    }
+    if(keywords[1,4] == "march") {
+      freqs2 <-freqs2[!(freqs2$month != "-03-"),]
+    }
+    if(keywords[1,4] == "april") {
+      freqs2 <-freqs2[!(freqs2$month != "-04-"),]
+    }
+    if(keywords[1,4] == "may") {
+      freqs2 <-freqs2[!(freqs2$month != "-05-"),]
+    }
+    if(keywords[1,4] == "june") {
+      freqs2 <-freqs2[!(freqs2$month != "-06-"),]
+    }
+    if(keywords[1,4] == "july") {
+      freqs2 <-freqs2[!(freqs2$month != "-07-"),]
+    }
+    if(keywords[1,4] == "august") {
+      freqs2 <-freqs2[!(freqs2$month != "-08-"),]
+    }
+    if(keywords[1,4] == "september") {
+      freqs2 <-freqs2[!(freqs2$month != "-09-"),]
+    }
+    if(keywords[1,4] == "october") {
+      freqs2 <-freqs2[!(freqs2$month != "-10-"),]
+    }
+    if(keywords[1,4] == "november") {
+      freqs2 <-freqs2[!(freqs2$month != "-11-"),]
+    }
+    if(keywords[1,4] == "december") {
+      freqs2 <-freqs2[!(freqs2$month != "-12-"),]
+    }
+  }
+
+
+
+  ##we need to make a new corpus that only contains the docs in "freqs"
+  all_sentences = data.frame()
+  
+  for (i in 1:nrow(freqs)) {
+    c = corpus(allfiles[[row.names(freqs)[i]]][["content"]]) 
+    corp_seg = corpus_segment(c, pattern = "[.?!]", valuetype = "regex", pattern_position = "before")
+    ccc= cbind(texts(corp_seg), docvars(corp_seg), metadoc(corp_seg))
+    colnames(ccc)[1] <- "text"
+    all_sentences = rbind(all_sentences,ccc)
+  }
+  
+all_sentences2 = data.frame()
+  if(keywords[3] == "2013" | keywords[3] == "2014") {
+    for (i in 1:nrow(freqs2)) {
+    c = corpus(allfiles[[row.names(freqs2)[i]]][["content"]]) 
+    corp_seg = corpus_segment(c, pattern = "[.?!]", valuetype = "regex", pattern_position = "before")
+    ccc= cbind(texts(corp_seg), docvars(corp_seg), metadoc(corp_seg))
+    colnames(ccc)[1] <- "text"
+    all_sentences2 = rbind(all_sentences2,ccc)
+    }
+  }
+   
+  #this gets sentences that only have all the keywords
+  keyword_sentences = subset(all_sentences, (grepl(keywords[1], text)  |  grepl(keywords[2], text)) & grepl(keywords[3], text) & grepl(keywords[4], text))
+
+  #if(nrow(keyword_sentences) == 0) {
+  #  keyword_sentences = subset(all_sentences, (grepl(keywords[1], text)  |  grepl(keywords[2], text)) & (grepl(keywords[3], text) | grepl(keywords[4], text)))
+  #}
+  
+  keyword_sentences2 = data.frame()
+  if(keywords[3] == "2013" | keywords[3] == "2014") {
+    keyword_sentences2 = subset(all_sentences2, (grepl(keywords[1], text)  |  grepl(keywords[2], text)))
+  }
+
+   #keyword_sentencesssss = subset(all_sentences, (grepl(keywords[1], text)  |  grepl(keywords[2], text)) & grepl("american airlines",text))
+
+  
+  
+  #now we find the Company!!!
+  keyword_sentences = rbind(keyword_sentences, keyword_sentences2)
+  goodies = keyword_sentences[FALSE,]
+  answer = data.frame()
+  
+  for (i in 1:2033){
+    goodies = subset(keyword_sentences, grepl(finalCompanies[i], text))
+    if(nrow(goodies) > 0) {
+      newanswer = as.data.frame(finalCompanies[i])
+      newanswer$count = nrow(goodies)
+      answer = rbind(answer,newanswer)
+    }
+    goodies = keyword_sentences[FALSE,]
+  }
+  colnames(answer)[1] = "answer"
+}
+
+
+
+#print answer
+if(grepl("affects", question) != 1) {
+  print(as.character(answer$answer)[which.max(answer$count)])
+}
+if(grepl("affects", question) == 1) {
+  print(answer)
+}
+
+
+```
+
+
